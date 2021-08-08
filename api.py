@@ -35,15 +35,12 @@ def auth_required(f):
     def decorated(*args, **kwargs):
         try:
             auth = request.authorization
-            response = {}    
             
-
-           
-           
-           
+            response = {}    
            
             if auth:
                 cur = db.cursor(dictionary=True)
+                print("&&&&&&&&&&&&&&&&&&&&&& ", auth.token)
                 command = 'SELECT user_id FROM authentication where username = "'+auth.username+'" AND password = "'+auth.password+'"'
                 print(command)
                 cur.execute(command)
@@ -308,11 +305,53 @@ def post(post_name):
     
     try:
         cur = db.cursor(dictionary=True)
+        
             
-        command = "SELECT * FROM posts WHERE title = \""+post_name+"\""
+        command = """
+            SELECT 
             
+            post.*,
+            user.name as username,
+            posted_by_user.name as posted_by_name
+            
+            FROM posts post 
+            
+            LEFT JOIN users user 
+            ON user.user_id = post.user_id 
+            
+            LEFT JOIN users posted_by_user 
+            ON posted_by_user.user_id = post.posted_by
+
+            WHERE post.title = \""""+post_name+"""\" 
+        """
+        # print(command)
         cur.execute(str(command))
         result = cur.fetchall()
+
+        command = """
+            SELECT 
+            
+            COUNT(*)
+            
+            FROM posts_likes
+            
+            WHERE post_id = \""""+ str(result[0]['post_id']) +"""\" 
+        """
+        cur.execute(str(command))
+        result[0]['likes_count'] = cur.fetchall()[0]['COUNT(*)']
+        
+        command = """
+            SELECT 
+            
+            COUNT(*)
+            
+            FROM posts_comments
+            
+            WHERE post_id = \""""+str(result[0]['post_id'])+"""\" 
+        """
+
+        cur.execute(str(command))
+        result[0]['comments_count'] = cur.fetchall()[0]['COUNT(*)']
         cur.close()
 
         if len(result) == 0:
@@ -325,10 +364,13 @@ def post(post_name):
 
         pass
 
-    except:
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        # print(e)
         cur.close()
         return response,500
         pass
+
 
 
 @app.route('/api/playlist/<item>',methods=['GET','POST'])
@@ -662,6 +704,157 @@ def like_post_toggle():
         return response,500
         pass
 
+
+
+
+@app.route("/api/get/comments/<post_id>",methods=['POST','GET'])
+def get_post_comments(post_id):
+    
+    response = {}
+
+    try:
+        offset = 5
+        if request.args.get('page'):
+            page = int(request.args.get('page'))
+            # time.sleep(5)
+        else:
+
+            page = 1
+        # print(page)
+
+        page -=1
+        cur = db.cursor(dictionary=True)
+        # data = request.get_json()
+     
+        command = "SELECT COUNT(*) from posts_comments WHERE post_id = "+str(post_id)+""
+        cur.execute(str(command))
+        total_count = cur.fetchall()
+        #comment
+        #number of comments 
+        #numebr of likes on that comment
+
+        command = """
+        SELECT * FROM
+        (SELECT 
+        
+        comments.*,
+        user.name as username ,
+        user.image_url as user_image_url,
+        COUNT(likes.like_id) as likes_count        
+        
+        FROM
+        comments comments 
+        LEFT JOIN comments_likes likes
+        on likes.comment_id = comments.comment_id
+
+        LEFT JOIN users user 
+        on user.user_id = comments.user_id
+        
+        WHERE 
+        comments.comment_id 
+        
+        in (SELECT comment_id from posts_comments WHERE post_id = """+str(post_id)+""") 
+        GROUP BY comments.comment_id 
+        ORDER BY comments.comment_id DESC
+        LIMIT """+str(offset*page)+""" , """+str(offset)+""")
+
+        sub ORDER BY comment_id ASC
+
+        """
+        print(command)
+        cur.execute(str(command))
+        result = cur.fetchall()
+        cur.close()
+
+        # if len(result) == 0:
+        #     return response,404    
+        # else:
+        
+        response["data"] = result
+        response["pages"] = {}
+        response["pages"]["current_page"] = page
+        response["pages"]["location"] = '/posts'
+        response["pages"]["number_of_comments"] = total_count[0]['COUNT(*)']
+        response["pages"]["number_of_comments_shown"] = min(total_count[0]['COUNT(*)'],(page+1)*offset)
+        response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
+            # pprint(response)
+        return response,200
+            
+    except Exception as e :
+        print("**************** Hello",e)
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+
+        return response,500
+        pass
+
+@app.route("/api/add_post_comment",methods=['POST'])
+def add_post_comment():
+    response = {}
+
+    try:
+        cur = db.cursor(dictionary=True)
+        data = request.get_json()
+        pprint(data)
+        command = "SELECT user_id FROM session_tokens WHERE token = '"+ data['token'] +"'"
+        print(command)
+        cur.execute(str(command))
+        user_id = cur.fetchall()[0]['user_id']
+        # print(res)
+
+        command = 'INSERT INTO `comments`(`user_id`, `text`) VALUES (\''+str(user_id)+'\',\''+data["text"]+'\')'
+        # command.replace('\'',"\`")
+        print(command)
+        cur.execute(str(command))
+        cur.fetchall()
+        comment_id = cur.lastrowid
+        
+        command = 'INSERT INTO `posts_comments`(`comment_id`, `post_id`) VALUES ("'+str(comment_id)+'","'+str(data["post_id"])+'")'
+        print(command)
+        cur.execute(str(command))
+        cur.fetchall()
+
+        command = """
+        SELECT 
+        
+        comments.*,
+        user.name as username ,
+        user.image_url as user_image_url,
+        COUNT(likes.like_id) as likes_count        
+        
+        FROM
+        comments comments 
+        LEFT JOIN comments_likes likes
+        on likes.comment_id = comments.comment_id
+
+        LEFT JOIN users user 
+        on user.user_id = comments.user_id
+        
+        WHERE 
+        comments.comment_id = """+str(comment_id) +"""
+        GROUP BY comments.comment_id 
+
+        """
+
+        cur.execute(str(command))
+        
+        response['data'] = cur.fetchall()
+
+        response["server message"] = "Added successfully!"
+      
+
+        pprint(response)
+        cur.close()
+        return response,201
+   
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        cur.close()
+        return response,500
+        pass
+
+    pass
 
 if __name__ == '__main__':
     app.run(host = '0.0.0.0',port=5001,debug=True)
