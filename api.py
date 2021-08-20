@@ -62,7 +62,7 @@ def auth_required(f):
 
         except Exception as e:
             response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-            cur.close()
+            # cur.close()
             return response,500
             pass
 
@@ -104,7 +104,7 @@ def authenticate():
             return make_response(response,200)
             
     except:
-        cur.close()
+        # cur.close()
         return make_response(response,500)
 
 
@@ -134,14 +134,14 @@ def tag_posts(tag_name = None):
             result = cur.fetchall()
             cur.close()
 
-            if len(result) == 0:
-                return response,404    
-            else:
-                response["data"] = {}
-                response["data"]["type"] = request.args.get('type').lower()
-                response["data"]["tag_name"] = tag_name
-                response["data"]["cards"]=result
-                return response,200
+            # if len(result) == 0:
+            #     return response,404    
+            # else:
+            response["data"] = {}
+            response["data"]["type"] = request.args.get('type').lower()
+            response["data"]["tag_name"] = tag_name
+            response["data"]["cards"]=result
+            return response,200
 
         else: # it is post
 
@@ -155,9 +155,16 @@ def tag_posts(tag_name = None):
 
                     result = []
                     tag = {}
-                    tag_name = i['name']
+                    tag_name = parse_in(i['name'])
+                    offset = 7
 
-                    command = "SELECT * FROM posts WHERE post_id in (SELECT post_id FROM posts_tags WHERE tag_id in(SELECT tag_id FROM tags WHERE tag_name = \""+tag_name+"\"))"
+                    if int(i['number_of_cards']) :
+                       offset = i['number_of_cards']
+
+                    
+
+                    command = "SELECT res.* FROM (SELECT p.* FROM posts p LEFT JOIN posts_tags pt ON p.post_id = pt.post_id LEFT JOIN tags t ON t.tag_id = pt.tag_id WHERE t.tag_name = \""+tag_name+"\" ORDER BY p.post_id DESC LIMIT 0,"+str(offset)+") res ORDER BY res.post_id"
+                    # print(command)
                     cur.execute(str(command))
                     result = cur.fetchall()
                     
@@ -173,41 +180,61 @@ def tag_posts(tag_name = None):
 
             else:
 
-                offset = 2
+                offset = 10
                 page = int(request.args.get('page'))
                 # print(page)
-                tag_name = tags[0]['name']
+                tag_name = parse_in(tags[0]['name'])
                 print("HELOOOOOOOOOOOOO")
                 page -=1
                 cur = db.cursor(dictionary=True)
             
-                command = "SELECT COUNT(*) FROM posts WHERE post_id in (SELECT post_id FROM posts_tags WHERE tag_id in(SELECT tag_id FROM tags WHERE tag_name = \""+tag_name+"\"))"
+                command = "SELECT COUNT(*) FROM posts WHERE post_id in (SELECT post_id FROM posts_tags WHERE tag_id in (SELECT tag_id FROM tags WHERE tag_name = \""+tag_name+"\"))"
 
                 cur.execute(str(command))
                 total_count = cur.fetchall()
                 
-                command = "SELECT * FROM posts WHERE post_id in (SELECT post_id FROM posts_tags WHERE tag_id in(SELECT tag_id FROM tags WHERE tag_name = \""+tag_name+"\")) LIMIT "+str(offset*page)+","+str(offset)+""
+                command = """
+                SELECT
+
+                post.*,
+                GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
+                From posts post 
+
+                LEFT JOIN posts_tags pt 
+                ON pt.post_id = post.post_id  
+
+                LEFT JOIN tags tag 
+                ON tag.tag_id = pt.tag_id 
+                
+                
+                WHERE post.post_id in (SELECT pt.post_id FROM posts_tags pt WHERE pt.tag_id in(SELECT tag.tag_id FROM tags tag WHERE tag.tag_name = \""""+tag_name+"""\")) 
+
+                GROUP BY post.post_id
+            
+                LIMIT """+str(offset*page)+","+str(offset)+""
+
+                print(command)
                 cur.execute(str(command))
                 result = cur.fetchall()
                 cur.close()   
 
-                if len(result) == 0:
-                    return response,404    
-                else:
+                # if len(result) == 0:
+                #     return response,404    
+                # else:
                     
-                    response["data"] = result
-                    response["pages"] = {}
-                    response["pages"]["current_page"] = page
-                    response["pages"]["location"] = '/tags/'+str(tag_name)
-                    response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
+                response["data"] = result
+                response["pages"] = {}
+                response["pages"]["current_page"] = page
+                response["pages"]["location"] = '/tags/'+str(tag_name)
+                response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
                     # pprint(response)
-                    return response,200         
+                return response,200         
 
         pass
 
     except Exception as e:
-        cur.close()
-        print(e)
+        # cur.close()
+        print(str(e))
         return response,500
         pass
     return response
@@ -245,7 +272,7 @@ def post_info(post_name):
         pass
 
     except:
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -289,18 +316,18 @@ def add_post():
         
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
 
 
 
-@app.route('/api/post/<post_name>')
+@app.route('/api/get/post/<post_name>')
 def post(post_name):
 
     post_name = parse_in(post_name)
-    print(post_name)
+    # print(post_name)
     response = {}
     
     try:
@@ -308,11 +335,14 @@ def post(post_name):
         
             
         command = """
-            SELECT 
+            (SELECT 
             
             post.*,
             user.name as username,
-            posted_by_user.name as posted_by_name
+            posted_by_user.name as posted_by_name,
+            GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
+
+            
             
             FROM posts post 
             
@@ -322,7 +352,14 @@ def post(post_name):
             LEFT JOIN users posted_by_user 
             ON posted_by_user.user_id = post.posted_by
 
-            WHERE post.title = \""""+post_name+"""\" 
+            LEFT JOIN posts_tags pt 
+            ON pt.post_id = post.post_id  
+
+            LEFT JOIN tags tag 
+            ON tag.tag_id = pt.tag_id 
+            
+            WHERE post.title = \""""+post_name+"""\" )
+           
         """
         # print(command)
         cur.execute(str(command))
@@ -360,6 +397,7 @@ def post(post_name):
         else:
             response["post_name"] = post_name
             response["data"] = result[0]
+            # pprint(response)
             return response,200
 
         pass
@@ -367,7 +405,7 @@ def post(post_name):
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
         # print(e)
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -375,9 +413,9 @@ def post(post_name):
 
 @app.route('/api/playlist/<item>',methods=['GET','POST'])
 def playlist(item):
+    response = {}
     try:
         cur = db.cursor(dictionary=True)
-        response = {}
     
         if item.isdigit():
             
@@ -418,7 +456,7 @@ def playlist(item):
                 
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -447,7 +485,7 @@ def add_tag():
         pass
     except Exception as e:
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -478,7 +516,7 @@ def tag_post():
         pass
     except Exception as e:
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -527,7 +565,7 @@ def get_all_playlists():
     except Exception as e :
         print("*****************",e)
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -549,7 +587,23 @@ def get_all_posts():
         cur.execute(str(command))
         total_count = cur.fetchall()
         
-        command = "SELECT * from posts LIMIT "+str(offset*page)+","+str(offset)+""
+        command = """
+        SELECT 
+        post.* , 
+        GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
+        From posts post 
+
+        LEFT JOIN posts_tags pt 
+        ON pt.post_id = post.post_id  
+
+        LEFT JOIN tags tag 
+        ON tag.tag_id = pt.tag_id 
+        
+        GROUP BY post.post_id
+
+
+        LIMIT """+str(offset*page)+""","""+str(offset)+""""""
+        # print(command)
         cur.execute(str(command))
         result = cur.fetchall()
         cur.close()
@@ -566,9 +620,12 @@ def get_all_posts():
             # pprint(response)
             return response,200
             
-    except:
-        cur.close()
-        return response,500
+    except Exception as e :
+            response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+            pprint(response)
+            # cur.close()
+            return response,500
+            pass
 
 @app.route("/api/get/user",methods=['GET'])
 def get_user():
@@ -593,12 +650,13 @@ def get_user():
         
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
 
     return response
+
 
 @app.route("/api/get/all_tracks",methods=['POST'])
 def get_all_tracks():
@@ -620,7 +678,7 @@ def get_all_tracks():
             return response,200
             
     except:
-        cur.close()
+        # cur.close()
         return response,500
 
 @app.route("/api/create/playlist",methods=['POST'])
@@ -649,10 +707,71 @@ def create_playlist():
         
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
+
+@app.route("/api/get/all_users",methods=['POST'])
+def all_users():
+    response = {}
+
+    try:
+        cur = db.cursor(dictionary=True)
+        data = request.get_json()
+        pprint(data)
+
+        command=""
+        print(command)
+        cur.execute(str(command))
+
+        command = "SELECT user_id,name FROM users WHERE author = 1"
+
+        cur.execute(str(command))
+        result = cur.fetchall()
+        cur.close()
+        response['data'] = result
+        pprint(result)
+        return response,201
+   
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        # cur.close()
+        return response,500
+        pass
+
+    pass
+
+
+@app.route("/api/get/all_tags",methods=['POST','GET'])
+def all_tags():
+    response = {}
+
+    try:
+        cur = db.cursor(dictionary=True)
+
+
+        command = "SELECT * FROM tags"
+
+        cur.execute(str(command))
+        result = cur.fetchall()
+        cur.close()
+
+        response['data'] = result
+        pprint(result)
+        return response,201
+   
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        # cur.close()
+        return response,500
+        pass
+
+    pass
 
 
 @app.route("/api/add_token",methods=['POST'])
@@ -676,7 +795,7 @@ def add_token():
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
         pprint(response)
-        cur.close()
+        # cur.close()
         return response,500
         pass
 
@@ -704,7 +823,41 @@ def like_post_toggle():
         return response,500
         pass
 
+@app.route("/api/add_new_post", methods=['POST'])
+def add_new_post():
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)
+        
+        command = """ INSERT INTO `posts` (`user_id`, `title`, `description`, `text`, `image_url`, `timestamp`, `posted_by`) VALUES ("""+data['user_id']+""",'"""+data['title']+"""','"""+data['text']+"""','"""+data['text']+"""','"""+data['image_url']+"""','"""+data['date']+"""',"""+data['posted_by']+""")"""
+        pprint(command)
+        cur.execute(str(command))
+        cur.fetchall()
+        post_id = cur.lastrowid
 
+        vals = []
+        for i in data['tags']:
+            vals.append( "("+str(post_id)+","+str(i)+")")
+        vals = ",".join(vals)
+        print(vals)
+        command = """ INSERT INTO `posts_tags` (`post_id`, `tag_id`) VALUES """+vals+""""""
+        print(command)
+        cur.execute(str(command))
+
+        
+
+        response["server message"] = "Added successfully!"
+        pprint(response)
+        cur.close()
+        # response["server message"] = 'Posted!' 
+        return response,200
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        # cur.close()
+        return response,500
+        pass
 
 
 @app.route("/api/get/comments/<post_id>",methods=['POST','GET'])
@@ -716,7 +869,6 @@ def get_post_comments(post_id):
         offset = 5
         if request.args.get('page'):
             page = int(request.args.get('page'))
-            # time.sleep(5)
         else:
 
             page = 1
@@ -761,7 +913,7 @@ def get_post_comments(post_id):
         sub ORDER BY comment_id ASC
 
         """
-        print(command)
+        # prints(command)
         cur.execute(str(command))
         result = cur.fetchall()
         cur.close()
@@ -850,11 +1002,129 @@ def add_post_comment():
     except Exception as e :
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
         pprint(response)
-        cur.close()
+        # cur.close()
         return response,500
         pass
-
     pass
+
+
+
+@app.route("/api/get/page_widgets", methods=['GET','POST'])
+def get_page_widgets():
+    response = {}
+
+    try:
+        data={
+            "page":"home"
+        }
+
+        # data = request.get_json()
+        pprint(data)
+
+        cur = db.cursor(dictionary=True)
+
+        command = """ 
+       
+    SELECT
+    w.*,
+    s.number_of_cards,
+    s.order_by,
+    s.tag_id,
+    t.tag_name,
+    s.shuffle,
+    s.descriptive,
+    pw.post_id,
+    p.title,
+    ew.code_block
+    FROM widgets w 
+
+    LEFT JOIN slider_widget s ON s.widget_id = w.widget_id 
+    LEFT JOIN tags t ON s.tag_id = t.tag_id
+
+    LEFT JOIN post_widget pw ON w.widget_id = pw.widget_id 
+    LEFT JOIN posts p ON p.post_id = pw.post_id
+
+    LEFT JOIN embeded_widget ew ON w.widget_id = ew.widget_id
+
+    LEFT JOIN 
+ 	page_widgets paw ON paw.widget_id = w.widget_id
+
+ WHERE 
+ 	paw.page = \""""+data['page']+"""\" 
+ ORDER by 
+ 	paw.order_by
+
+        """
+
+        cur.execute(str(command))
+        response['data'] = cur.fetchall()
+
+        return response,200
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        # cur.close()
+        return response,500
+        pass
+    pass
+
+
+
+#--------------------------[ Registration ]--------------------------#
+
+
+#[ Create ]--------------------------#
+
+@app.route('/api/create/user',methods=['POST'])
+def create_user():
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="INSERT INTO `users`( `name` ) VALUES (\""+str(data['name'])+"\")"  
+
+        cur.execute(str(command))
+        cur.fetchall()
+        user_id = cur.lastrowid
+
+        response['user_id'] = user_id
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+        
+
+@app.route('/api/create/authentication',methods=['POST'])
+def create_authentication():
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="INSERT INTO `authentication`(`user_id`, `username`, `password`, `email`) VALUES ("+str(data['user_id'])+",\""+str(data['username'])+"\",\""+str(data['password'])+"\",\""+str(data['email'])+"\")" 
+
+        cur.execute(str(command))
+        cur.fetchall()
+
+        cur.close()
+        response['status_code'] = 200
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+        
+
+
+#[ Get ]--------------------------#
+
+
 
 if __name__ == '__main__':
     app.run(host = '0.0.0.0',port=5001,debug=True)
