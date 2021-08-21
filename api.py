@@ -461,33 +461,6 @@ def playlist(item):
         pass
 
 
-@app.route('/api/create/tag',methods=['POST'])
-@auth_required
-def add_tag():
-    
-    data = request.get_json()
-    response = {}
-    try:
-        cur = db.cursor(dictionary=True)
-        command = 'SELECT tag_id FROM tags WHERE tag_name = "'+data["tag_name"]+'"' 
-        cur.execute(command)
-        result = cur.fetchall()
-        if len(result) == 0:
-            command = 'INSERT INTO `tags`(`tag_name`) VALUE ("'+data["tag_name"]+'")'
-            cur.execute(command)
-            response["server message"] = 'Added successfully!'
-
-            return response,201
-        else:
-            response["server message"] = 'Was not added!,Tag name conflict with tag_id = "'+str(result[0]["tag_id"])+'"'
-            cur.close()
-            return response,409
-        pass
-    except Exception as e:
-        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        # cur.close()
-        return response,500
-        pass
 
 @app.route('/api/add/tag_post',methods=['POST'])
 @auth_required
@@ -576,34 +549,41 @@ def get_all_posts():
     response = {}
 
     try:
-        offset = 5
-        page = int(request.args.get('page'))
-        # print(page)
+        if request.args.get('page'):
+            page = int(request.args.get('page'))-1
+        else:
+            page =1
 
-        page -=1
+        if request.args.get('offset'):
+            offset = int(request.args.get('offset'))
+        else:
+            offset = 5
+
         cur = db.cursor(dictionary=True)
      
         command = "SELECT COUNT(*) from posts"
         cur.execute(str(command))
         total_count = cur.fetchall()
         
-        command = """
-        SELECT 
-        post.* , 
-        GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
-        From posts post 
+        if request.args.get('all'):
+            command = "SELECT post_id,title FROM posts"
+        else:
+            command = """
+            SELECT 
+            post.* , 
+            GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
+            From posts post 
 
-        LEFT JOIN posts_tags pt 
-        ON pt.post_id = post.post_id  
+            LEFT JOIN posts_tags pt 
+            ON pt.post_id = post.post_id  
 
-        LEFT JOIN tags tag 
-        ON tag.tag_id = pt.tag_id 
-        
-        GROUP BY post.post_id
+            LEFT JOIN tags tag 
+            ON tag.tag_id = pt.tag_id 
+            
+            GROUP BY post.post_id
 
+            LIMIT """+str(offset*page)+""","""+str(offset)+""""""
 
-        LIMIT """+str(offset*page)+""","""+str(offset)+""""""
-        # print(command)
         cur.execute(str(command))
         result = cur.fetchall()
         cur.close()
@@ -1009,71 +989,19 @@ def add_post_comment():
 
 
 
-@app.route("/api/get/page_widgets", methods=['GET','POST'])
-def get_page_widgets():
-    response = {}
 
-    try:
-        data={
-            "page":"home"
-        }
-
-        # data = request.get_json()
-        pprint(data)
-
-        cur = db.cursor(dictionary=True)
-
-        command = """ 
-       
-    SELECT
-    w.*,
-    s.number_of_cards,
-    s.order_by,
-    s.tag_id,
-    t.tag_name,
-    s.shuffle,
-    s.descriptive,
-    pw.post_id,
-    p.title,
-    ew.code_block
-    FROM widgets w 
-
-    LEFT JOIN slider_widget s ON s.widget_id = w.widget_id 
-    LEFT JOIN tags t ON s.tag_id = t.tag_id
-
-    LEFT JOIN post_widget pw ON w.widget_id = pw.widget_id 
-    LEFT JOIN posts p ON p.post_id = pw.post_id
-
-    LEFT JOIN embeded_widget ew ON w.widget_id = ew.widget_id
-
-    LEFT JOIN 
- 	page_widgets paw ON paw.widget_id = w.widget_id
-
- WHERE 
- 	paw.page = \""""+data['page']+"""\" 
- ORDER by 
- 	paw.order_by
-
-        """
-
-        cur.execute(str(command))
-        response['data'] = cur.fetchall()
-
-        return response,200
-    except Exception as e :
-        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        pprint(response)
-        # cur.close()
-        return response,500
-        pass
-    pass
 
 
 
 #--------------------------[ Registration ]--------------------------#
 
+#[ Update ]-----------------------#
 
-#[ Create ]--------------------------#
+#[ Delete ]-----------------------#
+
+
+#[ Create ]-----------------------#
+
 
 @app.route('/api/create/user',methods=['POST'])
 def create_user():
@@ -1123,6 +1051,366 @@ def create_authentication():
 
 
 #[ Get ]--------------------------#
+
+
+#------------------------------[ Tags ]------------------------------#
+
+#[ Create ]-----------------------#
+
+@app.route('/api/create/tag',methods=['POST'])
+def add_tag():
+    
+    data = request.get_json()
+    response = {}
+    try:
+        cur = db.cursor(dictionary=True)
+        command = 'SELECT tag_id FROM tags WHERE tag_name = "'+data["tag_name"]+'"' 
+        cur.execute(command)
+        result = cur.fetchall()
+        if len(result) == 0:
+            command = 'INSERT INTO `tags`(`tag_name`) VALUE ("'+data["tag_name"]+'")'
+            cur.execute(command)
+            response["server message"] = 'Added successfully!'
+
+            return response,201
+        else:
+            response["server message"] = 'Was not added!,Tag name conflict with tag_id = "'+str(result[0]["tag_id"])+'"'
+            cur.close()
+            return response,409
+        pass
+    except Exception as e:
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        return response,500
+        pass
+
+#[ Get ]--------------------------#
+
+#[ Update ]-----------------------#
+
+@app.route('/api/update/tag',methods=['PUT'])
+def update_tag():
+
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="UPDATE `tags` SET `tag_id`=\""+str(data['tag_id'])+"\",`tag_name`=\""+str(data['tag_name'])+"\" WHERE tag_id = \""+str(data['tag_id'])+"\""  
+        print(command)
+        cur.execute(str(command))
+            
+        response["server message"] = 'Tag was updated!' 
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+
+#[ Delete ]-----------------------#
+
+@app.route('/api/delete/tag',methods=['DELETE'])
+def delete_tag():
+
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="DELETE FROM tags WHERE tag_id = \""+str(data['tag_id'])+"\""  
+        print(command)
+        cur.execute(str(command))
+            
+        response["server message"] = 'Tag was deleted!' 
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+        
+
+
+#-----------------------------[ Widget ]-----------------------------#
+
+#[ Create ]-----------------------#
+
+@app.route('/api/create/widget',methods=['POST'])
+def add_widget():
+    
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True) 
+
+        command = "INSERT INTO `widgets`(`name`, `type`) VALUES (\""+str(data['name'])+"\",\""+str(data['type'])+"\")"
+        cur.execute(str(command))
+        cur.fetchall()
+        widget_id = cur.lastrowid   
+
+        if data['type'] == "slider":
+           
+            command = "INSERT INTO `slider_widget`(`widget_id`, `number_of_cards`, `order_by`, `tag_id`, `descriptive`, `shuffle`) VALUES (\""+str(widget_id)+"\",\""+str(data['number_of_cards'])+"\",\""+str(data['order_by'])+"\",\""+str(data['tag_id'])+"\",\""+str(data['descriptive'])+"\",\""+str(data['shuffle'])+"\")"
+            cur.execute(str(command))
+            return response,200
+
+        elif data['type'] == "post":
+
+            command = "INSERT INTO `post_widget`(`widget_id`, `post_id`) VALUES  (\""+str(widget_id)+"\",\""+str(data['post_id'])+"\")"
+            cur.execute(str(command))
+            return response,200
+
+        elif data['type'] == "embeded":
+            command = "INSERT INTO `embeded_widget`(`widget_id`, `code_block`) VALUES  (\""+str(widget_id)+"\",\'"+str(data['code_block'])+"\')"
+            cur.execute(str(command))
+            return response,200
+
+    except Exception as e:
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        return response,500
+        pass
+
+@app.route('/api/create/page_widget',methods=['POST'])
+def add_page_widget():
+    
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True) 
+
+        command = "INSERT INTO `page_widgets`(`widget_id`,`page`, `order_by`) VALUES (\""+str(data['widget_id'])+"\",\""+str(data['page'])+"\",\""+str(data['order_by'])+"\")"
+        cur.execute(str(command))
+        
+        cur.close()
+        return response,200
+
+    except Exception as e:
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        return response,500
+        pass
+
+#[ Get ]--------------------------#
+@app.route('/api/get/all_widgets',methods=['post'])
+def all_widgets():
+
+    response = {}
+    try:
+        cur = db.cursor(dictionary=True)   
+        command = """ 
+       
+    SELECT
+    w.*,
+    s.number_of_cards,
+    s.order_by,
+    s.tag_id,
+    t.tag_name,
+    s.shuffle,
+    s.descriptive,
+    pw.post_id,
+    p.title,
+    ew.code_block
+    FROM widgets w 
+
+    LEFT JOIN slider_widget s ON s.widget_id = w.widget_id 
+    LEFT JOIN tags t ON s.tag_id = t.tag_id
+
+    LEFT JOIN post_widget pw ON w.widget_id = pw.widget_id 
+    LEFT JOIN posts p ON p.post_id = pw.post_id
+
+    LEFT JOIN embeded_widget ew ON w.widget_id = ew.widget_id
+
+    LEFT JOIN 
+ 	page_widgets paw ON paw.widget_id = w.widget_id
+
+ ORDER by 
+ 	paw.order_by
+
+        """
+
+        cur.execute(str(command))
+        response['data'] = cur.fetchall()
+        # pprint(response)
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+
+
+@app.route("/api/get/page_widgets", methods=['GET','POST'])
+def get_page_widgets():
+    response = {}
+
+    try:
+            
+        data={
+            "page":"home"
+        }
+
+        # data = request.get_json()
+        pprint(data)
+
+        cur = db.cursor(dictionary=True)
+        if request.args.get('all'):
+            command = "SELECT pw.*,w.name FROM page_widgets pw LEFT JOIN widgets w ON w.widget_id = pw.widget_id "
+        else:
+            command = """ 
+       
+    SELECT
+    w.*,
+    s.number_of_cards,
+    s.order_by,
+    s.tag_id,
+    t.tag_name,
+    s.shuffle,
+    s.descriptive,
+    pw.post_id,
+    p.title,
+    ew.code_block
+    FROM widgets w 
+
+    LEFT JOIN slider_widget s ON s.widget_id = w.widget_id 
+    LEFT JOIN tags t ON s.tag_id = t.tag_id
+
+    LEFT JOIN post_widget pw ON w.widget_id = pw.widget_id 
+    LEFT JOIN posts p ON p.post_id = pw.post_id
+
+    LEFT JOIN embeded_widget ew ON w.widget_id = ew.widget_id
+
+    LEFT JOIN 
+ 	page_widgets paw ON paw.widget_id = w.widget_id
+
+ WHERE 
+ 	paw.page = \""""+data['page']+"""\" 
+ ORDER by 
+ 	paw.order_by
+
+        """
+
+        cur.execute(str(command))
+        response['data'] = cur.fetchall()
+
+        return response,200
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        # cur.close()
+        return response,500
+        pass
+    pass
+#[ Update ]-----------------------#
+
+@app.route('/api/update/widget',methods=['PUT'])
+def update_widget():
+
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+        
+        if data['type'] == "slider":
+            command ="UPDATE `slider_widget` SET `number_of_cards`=\""+str(data['number_of_cards'])+"\",`order_by`=\""+str(data['order_by'])+"\",`tag_id`=\""+str(data['tag_id'])+"\",`descriptive`=\""+str(data['descriptive'])+"\",`shuffle`=\""+str(data['shuffle'])+"\" WHERE widget_id = \""+str(data['widget_id'])+"\""  
+        elif data['type'] == "post":
+            command ="UPDATE `post_widget` SET `post_id`=\""+str(data['post_id'])+"\" WHERE widget_id = \""+str(data['widget_id'])+"\""  
+        elif data['type'] == "embeded":
+            command ="UPDATE `embeded_widget` SET `code_block`=\'"+str(data['code_block'])+"\' WHERE widget_id = \""+str(data['widget_id'])+"\""  
+
+        cur.execute(str(command))
+
+        command ="UPDATE `widgets` SET `name`=\'"+str(data['name'])+"\' WHERE widget_id = \""+str(data['widget_id'])+"\""  
+        cur.execute(str(command))
+
+            
+        response["server message"] = 'widget was updated!' 
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+
+
+
+@app.route('/api/update/page_widget',methods=['PUT'])
+def update_page_widget():
+
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="UPDATE `page_widgets` SET `page`=\""+str(data['page'])+"\",`order_by`=\""+str(data['order_by'])+"\" WHERE widget_id = \""+str(data['widget_id'])+"\""  
+        print(command)
+        cur.execute(str(command))
+            
+        response["server message"] = 'Page widget was updated!' 
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+
+
+#[ Delete ]-----------------------#
+
+@app.route('/api/delete/page_widget',methods=['DELETE'])
+def delete_page_widget():
+
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="DELETE FROM page_widgets WHERE widget_id = \""+str(data['widget_id'])+"\""  
+        print(command)
+        cur.execute(str(command))
+            
+        response["server message"] = 'Widget was deleted!' 
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+        
+@app.route('/api/delete/widget',methods=['DELETE'])
+def delete_widget():
+
+    response = {}
+    try:
+        data = request.get_json()
+        cur = db.cursor(dictionary=True)   
+
+        command ="DELETE FROM widgets WHERE widget_id = \""+str(data['widget_id'])+"\""  
+        print(command)
+        cur.execute(str(command))
+            
+        response["server message"] = 'Widget was deleted!' 
+
+        cur.close()
+        return response,200
+        
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        pprint(response)
+        return response,500
+        
+
+
+
 
 
 
