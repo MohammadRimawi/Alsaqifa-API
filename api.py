@@ -1,7 +1,8 @@
-from flask import Flask, render_template, request, session,make_response
+from flask import Flask, render_template, request, session,make_response, g
 from flask_assets import Environment, Bundle
 import mysql.connector
-
+from sqlalchemy import create_engine
+from jsql import sql
 from flask_cors import CORS, cross_origin
 
 
@@ -21,13 +22,29 @@ CORS(app)
 
 # app.config['CORS_ORIGINS'] = ['http://rimawidell:5000']
 
-
 load_dotenv()
+
+DATABASE_NAME = os.getenv("DATABASE_NAME")
 DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
+DATABASE_USER = os.getenv("DATABASE_USER")
+DATABASE_HOST = os.getenv("DATABASE_HOST")
+
+engine = create_engine(f'mysql+mysqlconnector://{DATABASE_USER}:{DATABASE_PASSWORD}@{DATABASE_HOST}/{DATABASE_NAME}')
+
+db = mysql.connector.connect(host = DATABASE_HOST,user=DATABASE_USER,passwd=DATABASE_PASSWORD,database = DATABASE_NAME, auth_plugin='mysql_native_password',autocommit=True)
 
 
-# db = mysql.connector.connect(host = "192.168.1.70",user="python-connector",passwd=DATABASE_PASSWORD,database = "Alsaqifa")
-db = mysql.connector.connect(host = "127.0.0.1",user="root",passwd=DATABASE_PASSWORD,database = "Alsaqifa", auth_plugin='mysql_native_password',autocommit=True)
+@app.before_request
+def before_request_func():
+    g.conn = engine.connect()
+    g.transaction = g.conn.begin()
+
+
+@app.after_request
+def after_request_func(response):
+    g.transaction.commit()
+    g.conn.close()
+    return response
 
 
 def auth_required(f):
@@ -39,6 +56,8 @@ def auth_required(f):
             response = {}    
            
             if auth:
+                
+                db.reconnect()
                 cur = db.cursor(dictionary=True)
                 print("&&&&&&&&&&&&&&&&&&&&&& ", auth.token)
                 command = 'SELECT user_id FROM authentication where username = "'+auth.username+'" AND password = "'+auth.password+'"'
@@ -71,7 +90,16 @@ def auth_required(f):
 
 @app.route('/api')
 def index():
-    return "test"
+    m = {
+        'x': 5, 'y': 10
+    }
+    res = sql(g.conn, '''
+        select
+            :x as a,
+            :y as b,
+            3 as z
+        ''', **m).dict()
+    return res
 
 
 
@@ -86,9 +114,10 @@ def authenticate():
     print(data)
 
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         
-        command = 'SELECT * FROM users WHERE user_id in (SELECT user_id FROM authentication where username = "'+data["username"]+'" AND password = "'+data["password"]+'")'
+        command = 'SELECT * FROM users u LEFT JOIN authentication a on a.user_id = u.user_id where a.username = "'+data["username"]+'" AND a.password = "'+data["password"]+'"'
         cur.execute(str(command))
         result = cur.fetchall()
         cur.close()
@@ -103,10 +132,13 @@ def authenticate():
 
             return make_response(response,200)
             
-    except:
+    except Exception as e:
         # cur.close()
-        return make_response(response,500)
-
+        print(e)
+        return response,500
+        pass
+    return response
+    pass
 
 
 
@@ -116,10 +148,11 @@ def tag_posts(tag_name = None):
     response = {}
     
     tags = request.get_json()['tags']
-    pprint(tags)
+    # pprint(tags)
 
    
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         if request.method == "GET":
             tag_name = parse_in(tag_name)
@@ -184,8 +217,9 @@ def tag_posts(tag_name = None):
                 page = int(request.args.get('page'))
                 # print(page)
                 tag_name = parse_in(tags[0]['name'])
-                print("HELOOOOOOOOOOOOO")
+                # print("HELOOOOOOOOOOOOO")
                 page -=1
+                db.reconnect()
                 cur = db.cursor(dictionary=True)
             
                 command = "SELECT COUNT(*) FROM posts WHERE post_id in (SELECT post_id FROM posts_tags WHERE tag_id in (SELECT tag_id FROM tags WHERE tag_name = \""+tag_name+"\"))"
@@ -213,7 +247,7 @@ def tag_posts(tag_name = None):
             
                 LIMIT """+str(offset*page)+","+str(offset)+""
 
-                print(command)
+                # print(command)
                 cur.execute(str(command))
                 result = cur.fetchall()
                 cur.close()   
@@ -234,7 +268,7 @@ def tag_posts(tag_name = None):
 
     except Exception as e:
         # cur.close()
-        print(str(e))
+        print(e)
         return response,500
         pass
     return response
@@ -245,11 +279,10 @@ def tag_posts(tag_name = None):
 def post_info(post_name):
 
     post_name = parse_in(post_name)
-    print(post_name)
+    # print(post_name)
     response = {}
     
     try:
-        cur = db.cursor(dictionary=True)
         if request.args.get('type').lower() == "brief":
             
             command = "SELECT * FROM posts WHERE title = \""+post_name+"\""
@@ -258,9 +291,7 @@ def post_info(post_name):
             #FIXME
              command = "SELECT * FROM posts WHERE title = \""+post_name+"\""
 
-        cur.execute(str(command))
-        result = cur.fetchall()
-        cur.close()
+        result = sql(g.conn, command).dict()
         if len(result) == 0:
             return response,404    
         else:
@@ -291,13 +322,14 @@ def add_post():
     #     print("Not Authorized!")
     #     return resp,status
     # pprint(reques)
-    print("test test")
+    # print("test test")
     response = {}
-    print(request.headers)
+    # print(request.headers)
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         data = request.get_json()
-        pprint(data)
+        # pprint(data)
 
         command = 'SELECT post_id FROM posts WHERE title = "'+data["title"]+'"'
         cur.execute(command)
@@ -322,99 +354,11 @@ def add_post():
 
 
 
-
-@app.route('/api/get/post/<post_name>')
-def post(post_name):
-
-    post_name = parse_in(post_name)
-    # print(post_name)
-    response = {}
-    
-    try:
-        cur = db.cursor(dictionary=True)
-        
-            
-        command = """
-            (SELECT 
-            
-            post.*,
-            user.name as username,
-            posted_by_user.name as posted_by_name,
-            GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
-
-            
-            
-            FROM posts post 
-            
-            LEFT JOIN users user 
-            ON user.user_id = post.user_id 
-            
-            LEFT JOIN users posted_by_user 
-            ON posted_by_user.user_id = post.posted_by
-
-            LEFT JOIN posts_tags pt 
-            ON pt.post_id = post.post_id  
-
-            LEFT JOIN tags tag 
-            ON tag.tag_id = pt.tag_id 
-            
-            WHERE post.title = \""""+post_name+"""\" )
-           
-        """
-        # print(command)
-        cur.execute(str(command))
-        result = cur.fetchall()
-
-        command = """
-            SELECT 
-            
-            COUNT(*)
-            
-            FROM posts_likes
-            
-            WHERE post_id = \""""+ str(result[0]['post_id']) +"""\" 
-        """
-        cur.execute(str(command))
-        result[0]['likes_count'] = cur.fetchall()[0]['COUNT(*)']
-        
-        command = """
-            SELECT 
-            
-            COUNT(*)
-            
-            FROM posts_comments
-            
-            WHERE post_id = \""""+str(result[0]['post_id'])+"""\" 
-        """
-
-        cur.execute(str(command))
-        result[0]['comments_count'] = cur.fetchall()[0]['COUNT(*)']
-        cur.close()
-
-        if len(result) == 0:
-            
-            return response,404    
-        else:
-            response["post_name"] = post_name
-            response["data"] = result[0]
-            # pprint(response)
-            return response,200
-
-        pass
-
-    except Exception as e :
-        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        # print(e)
-        # cur.close()
-        return response,500
-        pass
-
-
-
 @app.route('/api/playlist/<item>',methods=['GET','POST'])
 def playlist(item):
     response = {}
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
     
         if item.isdigit():
@@ -455,6 +399,7 @@ def playlist(item):
             return response,200
                 
     except Exception as e :
+        print(e)
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
         # cur.close()
         return response,500
@@ -469,12 +414,13 @@ def tag_post():
     response = {}
 
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         command = 'SELECT * FROM posts_tags WHERE post_id = "'+str(data["post_id"])+'" AND tag_id = "'+str(data["tag_id"])+'"'
         cur.execute(command)
 
         result = cur.fetchall()
-        print(result)
+        # print(result)
         if(len(result)!=0):
             response["server message"] = 'Was not added!,Post with post_id = "'+str(result[0]["post_id"])+'" already has tag_id = "'+str(result[0]["tag_id"])+'"'
             cur.close()
@@ -505,17 +451,19 @@ def get_all_playlists():
         offset = 5
         if request.args.get('page'):
             page = int(request.args.get('page'))
-            print(page)
+            # print(page)
             page -=1
         else:
             page = 0
 
+        db.reconnect()
         cur = db.cursor(dictionary=True)
      
         command = "SELECT COUNT(*) from playlists"
         cur.execute(str(command))
         total_count = cur.fetchall()
 
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         
 
@@ -536,82 +484,20 @@ def get_all_playlists():
             return response,200
             
     except Exception as e :
-        print("*****************",e)
+        # print("*****************",e)
         response["server message"] = 'Server Error!\n"'+str(e)+'"' 
         # cur.close()
         return response,500
         pass
 
 
-@app.route("/api/get/all_posts",methods=['POST','GET'])
-def get_all_posts():
-    
-    response = {}
-
-    try:
-        if request.args.get('page'):
-            page = int(request.args.get('page'))-1
-        else:
-            page =1
-
-        if request.args.get('offset'):
-            offset = int(request.args.get('offset'))
-        else:
-            offset = 5
-
-        cur = db.cursor(dictionary=True)
-     
-        command = "SELECT COUNT(*) from posts"
-        cur.execute(str(command))
-        total_count = cur.fetchall()
-        
-        if request.args.get('all'):
-            command = "SELECT post_id,title FROM posts"
-        else:
-            command = """
-            SELECT 
-            post.* , 
-            GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
-            From posts post 
-
-            LEFT JOIN posts_tags pt 
-            ON pt.post_id = post.post_id  
-
-            LEFT JOIN tags tag 
-            ON tag.tag_id = pt.tag_id 
-            
-            GROUP BY post.post_id
-
-            LIMIT """+str(offset*page)+""","""+str(offset)+""""""
-
-        cur.execute(str(command))
-        result = cur.fetchall()
-        cur.close()
-
-        if len(result) == 0:
-            return response,404    
-        else:
-            
-            response["data"] = result
-            response["pages"] = {}
-            response["pages"]["current_page"] = page
-            response["pages"]["location"] = '/posts'
-            response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
-            # pprint(response)
-            return response,200
-            
-    except Exception as e :
-            response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-            pprint(response)
-            # cur.close()
-            return response,500
-            pass
 
 @app.route("/api/get/user",methods=['GET'])
 def get_user():
     response = {}
     try:
         if "user_id" in request.args:
+            db.reconnect()
             cur = db.cursor(dictionary=True)
             command = "SELECT * FROM users WHERE user_id = "+str(request.args["user_id"])
             cur.execute(command)
@@ -643,6 +529,7 @@ def get_all_tracks():
     response = {}
 
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         
         command = "SELECT * from tracks"
@@ -664,11 +551,12 @@ def get_all_tracks():
 @app.route("/api/create/playlist",methods=['POST'])
 def create_playlist():
     response = {}
-    print(request.headers)
+    # print(request.headers)
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         data = request.get_json()
-        pprint(data)
+        # pprint(data)
 
         command = 'SELECT playlist_id FROM playlists WHERE name = "'+data["name"]+'"'
         cur.execute(command)
@@ -699,10 +587,10 @@ def all_users():
     try:
         cur = db.cursor(dictionary=True)
         data = request.get_json()
-        pprint(data)
+        # pprint(data)
 
         command=""
-        print(command)
+        # print(command)
         cur.execute(str(command))
 
         command = "SELECT user_id,name FROM users WHERE author = 1"
@@ -730,6 +618,7 @@ def all_tags():
     response = {}
 
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
 
 
@@ -759,6 +648,7 @@ def add_token():
     response = {}
 
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         data = request.get_json()
         pprint(data)
@@ -782,32 +672,13 @@ def add_token():
     pass
 #--------------------------[ Posts ]--------------------------#
 
-import time
-@app.route("/api/like_post",methods=['POST','OPTIONS'])
-@cross_origin()
-def like_post_toggle():
-
-    response = {}
-    try:
-        data = request.get_json()
-        pprint(data)
-        print("******************** HI")
-        
-        response['server message'] = "nice!"
-        time.sleep(3)
-        return response,200
-
-    except Exception as e :
-        print("**************** Hello")
-        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-        return response,500
-        pass
 
 @app.route("/api/add_new_post", methods=['POST'])
 def add_new_post():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         
         command = """ INSERT INTO `posts` (`user_id`, `title`, `description`, `text`, `image_url`, `timestamp`, `posted_by`) VALUES ("""+data['user_id']+""",'"""+data['title']+"""','"""+data['text']+"""','"""+data['text']+"""','"""+data['image_url']+"""','"""+data['date']+"""',"""+data['posted_by']+""")"""
@@ -840,90 +711,13 @@ def add_new_post():
         pass
 
 
-@app.route("/api/get/comments/<post_id>",methods=['POST','GET'])
-def get_post_comments(post_id):
-    
-    response = {}
-
-    try:
-        offset = 5
-        if request.args.get('page'):
-            page = int(request.args.get('page'))
-        else:
-
-            page = 1
-        # print(page)
-
-        page -=1
-        cur = db.cursor(dictionary=True)
-        # data = request.get_json()
-     
-        command = "SELECT COUNT(*) from posts_comments WHERE post_id = "+str(post_id)+""
-        cur.execute(str(command))
-        total_count = cur.fetchall()
-        #comment
-        #number of comments 
-        #numebr of likes on that comment
-
-        command = """
-        SELECT * FROM
-        (SELECT 
-        
-        comments.*,
-        user.name as username ,
-        user.image_url as user_image_url,
-        COUNT(likes.like_id) as likes_count        
-        
-        FROM
-        comments comments 
-        LEFT JOIN comments_likes likes
-        on likes.comment_id = comments.comment_id
-
-        LEFT JOIN users user 
-        on user.user_id = comments.user_id
-        
-        WHERE 
-        comments.comment_id 
-        
-        in (SELECT comment_id from posts_comments WHERE post_id = """+str(post_id)+""") 
-        GROUP BY comments.comment_id 
-        ORDER BY comments.comment_id DESC
-        LIMIT """+str(offset*page)+""" , """+str(offset)+""")
-
-        sub ORDER BY comment_id ASC
-
-        """
-        # prints(command)
-        cur.execute(str(command))
-        result = cur.fetchall()
-        cur.close()
-
-        # if len(result) == 0:
-        #     return response,404    
-        # else:
-        
-        response["data"] = result
-        response["pages"] = {}
-        response["pages"]["current_page"] = page
-        response["pages"]["location"] = '/posts'
-        response["pages"]["number_of_comments"] = total_count[0]['COUNT(*)']
-        response["pages"]["number_of_comments_shown"] = min(total_count[0]['COUNT(*)'],(page+1)*offset)
-        response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
-            # pprint(response)
-        return response,200
-            
-    except Exception as e :
-        print("**************** Hello",e)
-        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
-
-        return response,500
-        pass
 
 @app.route("/api/add_post_comment",methods=['POST'])
 def add_post_comment():
     response = {}
 
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         data = request.get_json()
         pprint(data)
@@ -1008,6 +802,7 @@ def create_user():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="INSERT INTO `users`( `name` ) VALUES (\""+str(data['name'])+"\")"  
@@ -1032,6 +827,7 @@ def create_authentication():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="INSERT INTO `authentication`(`user_id`, `username`, `password`, `email`) VALUES ("+str(data['user_id'])+",\""+str(data['username'])+"\",\""+str(data['password'])+"\",\""+str(data['email'])+"\")" 
@@ -1063,6 +859,7 @@ def add_tag():
     data = request.get_json()
     response = {}
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         command = 'SELECT tag_id FROM tags WHERE tag_name = "'+data["tag_name"]+'"' 
         cur.execute(command)
@@ -1093,6 +890,7 @@ def update_tag():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="UPDATE `tags` SET `tag_id`=\""+str(data['tag_id'])+"\",`tag_name`=\""+str(data['tag_name'])+"\" WHERE tag_id = \""+str(data['tag_id'])+"\""  
@@ -1117,6 +915,7 @@ def delete_tag():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="DELETE FROM tags WHERE tag_id = \""+str(data['tag_id'])+"\""  
@@ -1134,10 +933,13 @@ def delete_tag():
         return response,500
         
 
-
+######################################################################
 #-----------------------------[ Widget ]-----------------------------#
+######################################################################
 
+###################################
 #[ Create ]-----------------------#
+###################################
 
 @app.route('/api/create/widget',methods=['POST'])
 def add_widget():
@@ -1145,6 +947,7 @@ def add_widget():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True) 
 
         command = "INSERT INTO `widgets`(`name`, `type`) VALUES (\""+str(data['name'])+"\",\""+str(data['type'])+"\")"
@@ -1180,6 +983,7 @@ def add_page_widget():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True) 
 
         command = "INSERT INTO `page_widgets`(`widget_id`,`page`, `order_by`) VALUES (\""+str(data['widget_id'])+"\",\""+str(data['page'])+"\",\""+str(data['order_by'])+"\")"
@@ -1193,12 +997,16 @@ def add_page_widget():
         return response,500
         pass
 
+###################################
 #[ Get ]--------------------------#
+###################################
+
 @app.route('/api/get/all_widgets',methods=['post'])
 def all_widgets():
 
     response = {}
     try:
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
         command = """ 
        
@@ -1242,7 +1050,6 @@ def all_widgets():
         pprint(response)
         return response,500
 
-
 @app.route("/api/get/page_widgets", methods=['GET','POST'])
 def get_page_widgets():
     response = {}
@@ -1254,8 +1061,9 @@ def get_page_widgets():
         }
 
         # data = request.get_json()
-        pprint(data)
+        # pprint(data)
 
+        db.reconnect()
         cur = db.cursor(dictionary=True)
         if request.args.get('all'):
             command = "SELECT pw.*,w.name FROM page_widgets pw LEFT JOIN widgets w ON w.widget_id = pw.widget_id "
@@ -1304,7 +1112,10 @@ def get_page_widgets():
         return response,500
         pass
     pass
+
+###################################
 #[ Update ]-----------------------#
+###################################
 
 @app.route('/api/update/widget',methods=['PUT'])
 def update_widget():
@@ -1312,6 +1123,7 @@ def update_widget():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
         
         if data['type'] == "slider":
@@ -1337,18 +1149,17 @@ def update_widget():
         pprint(response)
         return response,500
 
-
-
 @app.route('/api/update/page_widget',methods=['PUT'])
 def update_page_widget():
 
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="UPDATE `page_widgets` SET `page`=\""+str(data['page'])+"\",`order_by`=\""+str(data['order_by'])+"\" WHERE widget_id = \""+str(data['widget_id'])+"\""  
-        print(command)
+        # print(command)
         cur.execute(str(command))
             
         response["server message"] = 'Page widget was updated!' 
@@ -1361,8 +1172,9 @@ def update_page_widget():
         pprint(response)
         return response,500
 
-
+###################################
 #[ Delete ]-----------------------#
+###################################
 
 @app.route('/api/delete/page_widget',methods=['DELETE'])
 def delete_page_widget():
@@ -1370,6 +1182,7 @@ def delete_page_widget():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="DELETE FROM page_widgets WHERE widget_id = \""+str(data['widget_id'])+"\""  
@@ -1392,6 +1205,7 @@ def delete_widget():
     response = {}
     try:
         data = request.get_json()
+        db.reconnect()
         cur = db.cursor(dictionary=True)   
 
         command ="DELETE FROM widgets WHERE widget_id = \""+str(data['widget_id'])+"\""  
@@ -1409,10 +1223,735 @@ def delete_widget():
         return response,500
         
 
+######################################################################
+#-----------------------------[ Posts ]------------------------------#
+######################################################################
+
+###################################
+#[ Create ]-----------------------#
+###################################
+
+
+@app.route("/api/like_post",methods=['POST'])
+def like_post_toggle():
+
+    response = {}
+    try:
+        data = request.get_json()
+        pprint(data)
+
+        db.reconnect()
+        cur = db.cursor(dictionary=True)   
+
+        command = "SELECT l.like_id FROM `likes` l LEFT JOIN `posts_likes` pl ON l.like_id = pl.like_id WHERE l.user_id = '"+str(data['user_id'])+"' AND  pl.post_id = '"+str(data['post_id'])+"' "
+        print(command)
+        cur.execute(str(command))
+        result = cur.fetchall()
+
+        if len(result) == 0:
+            # print("insert")
+            command = "INSERT INTO `likes`(`user_id`) VALUES ('"+str(data['user_id'])+"')"
+            cur.execute(str(command))
+            cur.fetchall()
+            like_id = cur.lastrowid
+
+            command = "INSERT INTO `posts_likes`(`like_id`, `post_id`) VALUES ('"+str(like_id)+"','"+str(data['post_id'])+"')"
+            cur.execute(str(command))
+                        
+            response['server message'] = "Post liked!"
+            response['liked'] = True
+
+            return response,200
+        else:
+            # print("delete",result)
+            command = "DELETE FROM `likes` WHERE like_id = '"+str(result[0]['like_id'])+"'"
+            cur.execute(str(command))
+            response['server message'] = "Post unliked!"
+            response['liked'] = False
+
+            return response,200
+            
+        response['server message'] = "!"
+        return response,200
+
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        return response,500
+        pass
+
+
+@app.route("/api/like_comment",methods=['POST'])
+def like_comment_toggle():
+
+    response = {}
+    try:
+        data = request.get_json()
+        # pprint(data)
+
+        db.reconnect()
+        cur = db.cursor(dictionary=True)   
+
+        command = "SELECT l.like_id FROM `likes` l LEFT JOIN `comments_likes` cl ON l.like_id = cl.like_id WHERE l.user_id = '"+str(data['user_id'])+"' AND  cl.comment_id = '"+str(data['comment_id'])+"' "
+        # print(command)
+        cur.execute(str(command))
+        result = cur.fetchall()
+
+        if len(result) == 0:
+            # print("insert")
+            command = "INSERT INTO `likes`(`user_id`) VALUES ('"+str(data['user_id'])+"')"
+            cur.execute(str(command))
+            cur.fetchall()
+            like_id = cur.lastrowid
+
+            command = "INSERT INTO `comments_likes`(`like_id`, `comment_id`) VALUES ('"+str(like_id)+"','"+str(data['comment_id'])+"')"
+            cur.execute(str(command))
+                        
+            response['server message'] = "Comment liked!"
+            response['liked'] = True
+
+            return response,200
+        else:
+            # print("delete",result)
+            command = "DELETE FROM `likes` WHERE like_id = '"+str(result[0]['like_id'])+"'"
+            cur.execute(str(command))
+            response['server message'] = "Comment unliked!"
+            return response,200
+            
+        response['server message'] = "Comment unliked!"
+        response['liked'] = False
+        return response,200
+
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        return response,500
+        pass
+
+
+
+###################################
+#[ Get ]--------------------------#
+###################################
+
+
+
+@app.route("/api/get/comments/<post_id>",methods=['POST','GET'])
+def get_post_comments(post_id):
+    response = {}
+
+    try:
+        if request.data:
+            data = request.get_json()
+        else:
+            data={}
+            data['user_id'] = -1
+
+        offset = 5
+        if request.args.get('page'):
+            page = int(request.args.get('page'))
+        else:
+            page = 1
+        # print("**")
+        page -=1
+        db.reconnect()
+        cur = db.cursor(dictionary=True)
+   
+     
+        command = "SELECT COUNT(*) from posts_comments WHERE post_id = "+str(post_id)+""
+        cur.execute(str(command))
+        total_count = cur.fetchall()
+
+        command = """
+        SELECT * FROM
+        (SELECT 
+        
+        comments.*,
+        user.name as username ,
+        user.image_url as user_image_url,
+        COUNT(likes.like_id) as likes_count        
+        
+        FROM
+        comments comments 
+        LEFT JOIN comments_likes likes
+        on likes.comment_id = comments.comment_id
+
+        LEFT JOIN users user 
+        on user.user_id = comments.user_id
+        
+        WHERE 
+        comments.comment_id 
+        
+        in (SELECT comment_id from posts_comments WHERE post_id = """+str(post_id)+""") 
+        GROUP BY comments.comment_id 
+        ORDER BY comments.comment_id DESC
+        LIMIT """+str(offset*page)+""" , """+str(offset)+""")
+
+        sub ORDER BY comment_id ASC
+
+        """
+        # print(command)
+        cur.execute(str(command))
+        result = cur.fetchall()
+
+
+        command = """
+            SELECT pc.comment_id,
+            CASE
+                WHEN l.user_id = """+str(data['user_id'])+""" THEN "1"
+                ELSE "0"
+            END AS "liked"
+            FROM posts_comments pc 
+            LEFT JOIN comments_likes cl ON cl.comment_id = pc.comment_id 
+            LEFT JOIN likes l ON cl.like_id = l.like_id
+
+            WHERE pc.post_id ="""+str(post_id)+"""
+        """
+
+        cur.execute(str(command))
+        liked_list = cur.fetchall()
+        # pprint(liked_list)
+        cur.close()
+        for i in range(len(result)):
+            for j in range(len(liked_list)):
+                if result[i]['comment_id'] == liked_list[j]['comment_id']:
+                    result[i]['liked'] = liked_list[j]['liked'] 
+                    
+
+        # pprint(result)
+        response["data"] = result
+        response["pages"] = {}
+        response["pages"]["current_page"] = page
+        response["pages"]["location"] = '/posts'
+        response["pages"]["number_of_comments"] = total_count[0]['COUNT(*)']
+        response["pages"]["number_of_comments_shown"] = min(total_count[0]['COUNT(*)'],(page+1)*offset)
+        response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
+            # pprint(response)
+        return response,200
+            
+    except Exception as e :
+        # print("**************** Hello",e)
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+
+        return response,500
+        pass
+
+@app.route("/api/get/comment",methods=['POST'])
+def get_comment():
+    response = {}
+
+    try:
+        data = request.get_json()
+        pprint(data)
+        comment_id = int(data['comment_id'])
+
+
+        res = sql(g.conn, '''
+
+            SELECT 
+            comment_id,text
+            FROM 
+                `comments` 
+
+            WHERE 
+
+                comment_id = :comment_id
+        
+            ''', comment_id = comment_id).dict()
+
+        pprint(res)
+
+    
+        response['data'] = res
+        return response,200
+            
+    except Exception as e :
+        print("**************** Hello",e)
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+
+        return response,500
+        pass
+
+
+@app.route("/api/get/all_posts",methods=['POST','GET'])
+def get_all_posts():
+    
+    response = {}
+
+    try:
+        if request.args.get('page'):
+            page = int(request.args.get('page'))-1
+        else:
+            page =1
+
+        if request.args.get('offset'):
+            offset = int(request.args.get('offset'))
+        else:
+            offset = 5
+
+        db.reconnect()
+        cur = db.cursor(dictionary=True)
+     
+        command = "SELECT COUNT(*) from posts"
+        cur.execute(str(command))
+        total_count = cur.fetchall()
+        
+        if request.args.get('all'):
+            command = "SELECT post_id,title FROM posts"
+        else:
+            command = """
+            SELECT 
+            post.* , 
+            GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
+            From posts post 
+
+            LEFT JOIN posts_tags pt 
+            ON pt.post_id = post.post_id  
+
+            LEFT JOIN tags tag 
+            ON tag.tag_id = pt.tag_id 
+            
+            GROUP BY post.post_id
+
+            LIMIT """+str(offset*page)+""","""+str(offset)+""""""
+
+        cur.execute(str(command))
+        result = cur.fetchall()
+        cur.close()
+
+        if len(result) == 0:
+            return response,404    
+        else:
+            
+            response["data"] = result
+            response["pages"] = {}
+            response["pages"]["current_page"] = page
+            response["pages"]["location"] = '/posts'
+            response["pages"]["number_of_pages"] = ceil(total_count[0]['COUNT(*)']/offset)
+            # pprint(response)
+            return response,200
+            
+    except Exception as e :
+            response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+            # pprint(response)
+            # cur.close()
+            return response,500
+            pass
+
+
+@app.route('/api/get/post_update_data', methods=['POST','GET'])
+def post_update_data():
+    response = {}
+    try:
+        # data = {}
+        data = request.get_json()
+        # data['post_id'] ="1"
+        db.reconnect()
+        cur = db.cursor(dictionary=True)
+     
+        command = """
+            (SELECT 
+            
+            post.*,
+            user.name as username,
+            posted_by_user.name as posted_by_name,
+            GROUP_CONCAT(DISTINCT tag.tag_id) as "tags"
+
+            
+            
+            FROM posts post 
+            
+            LEFT JOIN users user 
+            ON user.user_id = post.user_id 
+            
+            LEFT JOIN users posted_by_user 
+            ON posted_by_user.user_id = post.posted_by
+
+            LEFT JOIN posts_tags pt 
+            ON pt.post_id = post.post_id  
+
+            LEFT JOIN tags tag 
+            ON tag.tag_id = pt.tag_id 
+            
+            WHERE post.post_id = \""""+data['post_id']+"""\" )
+           
+        """
+        cur.execute(str(command))
+        result = cur.fetchall()
+        
+    
+        cur.close()
+
+        if len(result) == 0:
+            return response,404    
+        else:
+            
+            response["data"] = result[0]
+            return response,200
+            
+    except Exception as e :
+            response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+            # pprint(response)
+            # cur.close()
+            return response,500
+            pass
+
+
+@app.route('/api/get/post/<post_name>',methods=['POST','GET'])
+def post(post_name):
+
+    post_name = parse_in(post_name)
+    # print(post_name)
+    response = {}
+    
+    try:
+        db.reconnect()
+        cur = db.cursor(dictionary=True)
+        data = {}    
+        if request.data:
+            data = request.get_json()
+            print(data)
+        else:
+            print("hello")
+            data['user_id'] = -1
+        command = """
+            (SELECT 
+            
+            post.*,
+            user.name as username,
+            posted_by_user.name as posted_by_name,
+            GROUP_CONCAT(DISTINCT tag.tag_name) as "tags"
+
+            
+            
+            FROM posts post 
+            
+            LEFT JOIN users user 
+            ON user.user_id = post.user_id 
+            
+            LEFT JOIN users posted_by_user 
+            ON posted_by_user.user_id = post.posted_by
+
+            LEFT JOIN posts_tags pt 
+            ON pt.post_id = post.post_id  
+
+            LEFT JOIN tags tag 
+            ON tag.tag_id = pt.tag_id 
+            
+            WHERE post.title = \""""+post_name+"""\" )
+           
+        """
+        # print(command)
+        cur.execute(str(command))
+        result = cur.fetchall()
+        command = """
+        SELECT * FROM 
+        
+        (SELECT 
+            
+            COUNT(*) as "number_of_comments"
+            
+            FROM posts_comments
+            
+            WHERE post_id = """+str(result[0]['post_id'])+""") pc,
+            
+        ( SELECT 
+            
+            COUNT(*) as "number_of_likes"
+            
+            FROM posts_likes
+            
+            WHERE post_id = """+str(result[0]['post_id'])+""" ) pl
+        """
+      
+        # print(command)
+        cur.execute(str(command))
+        re =  cur.fetchall()[0]
+        # print(re)
+        result[0]['likes_count'] = re['number_of_likes']
+        result[0]['comments_count'] = re['number_of_comments']
+
+        command = """
+        SELECT 
+
+        case 
+            WHEN COUNT(*)!=0 THEN "1"
+            ELSE "0"
+        END as "liked"
+
+        FROM 
+
+        posts_likes pl 
+
+        LEFT JOIN likes l ON 
+        l.like_id = pl.like_id 
+
+        WHERE pl.post_id = """+str(result[0]['post_id'])+""" AND l.user_id = """+str(data['user_id'])+"""
+        GROUP BY pl.post_id  
+
+        """
+        print(command)
+        cur.execute(str(command))
+        liked = cur.fetchall()
+        if len(liked) !=0:
+            result[0]['liked'] = "1"
+        else:
+            result[0]['liked'] = "0"
+
+        pprint(liked)
+        
+        cur.close()
+
+        if len(result) == 0:
+            
+            return response,404    
+        else:
+            response["post_name"] = post_name
+            response["data"] = result[0]
+            # pprint(response)
+            return response,200
+
+        pass
+
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        print(e)
+        # cur.close()
+        return response,500
+        pass
+
+# @app.route('/api/get/post_user_liked_comments')
+# def post_user_liked_comments():
+
+
+###################################
+#[ Update ]-----------------------#
+###################################
+
+@app.route('/api/update/update_post',methods=['PUT'])
+def update_post():
+    response = {}
+    try:
+        data = request.get_json()
+        pprint(data)
+        post_id = int(data['post_id'])
+
+
+        res = sql(g.conn, '''
+
+            DELETE 
+            FROM
+
+            `posts_tags`
+
+            WHERE 
+
+                post_id = :post_id
+        
+            ''', post_id = post_id)
+
+        pprint(data['tags'])
+        
+        if len(data['tags'])!=0:
+            vals = []
+            for i in data['tags']:
+                vals.append((int(post_id),int(i)))
+        
+            #TODO figure out multi-row insert with validation
+            res = sql(g.conn, '''
+
+                INSERT 
+                INTO
+                
+                `posts_tags`
+
+                (`post_id`, `tag_id`) VALUES {% for val in vals %} ({{val[0]}},{{val[1]}}) {% if not loop.last %}, {% endif %}{% endfor %}
+
+            
+                ''', post_id = post_id,vals=(vals)) 
+
+        if data['image_url'] =="":
+            print("**************")
+            print(data['text'])
+
+            res = sql(g.conn, '''
+
+            UPDATE 
+                `posts`
+            SET 
+            
+                user_id = :user_id,
+                title = :title,
+                text = :text
+
+            WHERE 
+
+                post_id = :post_id
+        
+            ''', **data)
+        else:
+                        res = sql(g.conn, '''
+
+            UPDATE 
+                `posts`
+            SET 
+            
+                user_id = :user_id,
+                title = :title,
+                text = :text,
+                image_url = :image_url
+
+            WHERE 
+
+                post_id = :post_id
+        
+            ''', **data)
+
+        pprint(res)
+        return response,200
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        print(e)
+        # cur.close()
+        return response,500
+        pass
+
+
+@app.route("/api/update/update_comment",methods=['PUT'])
+def update_comment():
+    response = {}
+
+    try:
+        data = request.get_json()
+        pprint(data)
+        comment_id = int(data['comment_id'])
+
+
+        res = sql(g.conn, '''
+
+            UPDATE 
+                `comments` 
+            SET 
+            `text`= :text 
+            WHERE 
+                comment_id = :comment_id
+        
+            ''', **data)
+
+        pprint(res)
+
+    
+        # response['data'] = res
+        return response,200
+            
+    except Exception as e :
+        print("**************** Hello",e)
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+
+        return response,500
+        pass
+###################################
+#[ Delete ]-----------------------#
+###################################
+
+
+@app.route('/api/delete/delete_post',methods=['DELETE'])
+def delete_post():
+    response = {}
+    try:
+        data = request.get_json()
+        pprint(data)
+        post_id = int(data['post_id'])
+
+
+        res = sql(g.conn, '''
+
+            DELETE 
+            FROM
+
+            `posts`
+
+            WHERE 
+
+                post_id = :post_id
+        
+            ''', post_id = post_id)
+
+        response["server message"] = 'Post was deleted!' 
+
+        return response,200
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        print(e)
+        # cur.close()
+        return response,500
+        pass
+
+
+@app.route('/api/delete/delete_comment',methods=['DELETE'])
+def delete_comment():
+    response = {}
+    try:
+        data = request.get_json()
+        pprint(data)
+        comment_id = int(data['comment_id'])
+
+
+        res = sql(g.conn, '''
+
+            DELETE 
+            FROM
+
+            `comments`
+
+            WHERE 
+
+                comment_id = :comment_id
+        
+            ''', comment_id = comment_id)
+
+        response["server message"] = 'Comment was deleted!' 
+
+        return response,200
+    except Exception as e :
+        response["server message"] = 'Server Error!\n"'+str(e)+'"' 
+        print(e)
+        # cur.close()
+        return response,500
+        pass
 
 
 
 
+######################################################################
+#----------------------------[ Template ]----------------------------#
+######################################################################
+
+###################################
+#[ Create ]-----------------------#
+###################################
+
+###################################
+#[ Get ]--------------------------#
+###################################
+
+###################################
+#[ Update ]-----------------------#
+###################################
+
+###################################
+#[ Delete ]-----------------------#
+###################################
+
+
+# SELECT pc.comment_id,
+# CASE
+# 	WHEN l.user_id = 1 THEN "1"
+#     ELSE "0"
+# END AS "LIKED"
+# FROM posts_comments pc 
+# LEFT JOIN comments_likes cl ON cl.comment_id = pc.comment_id 
+# LEFT JOIN likes l ON cl.like_id = l.like_id
+
+# WHERE pc.post_id = 2
 
 if __name__ == '__main__':
     app.run(host = '0.0.0.0',port=5001,debug=True)
