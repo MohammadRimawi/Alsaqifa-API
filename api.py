@@ -966,7 +966,7 @@ def add_new_post():
             INSERT INTO 
                 `posts` (`user_id`, `title`, `description`, `text`, `image_url`, `timestamp`, `posted_by`) 
             VALUES
-                ( :user_id , :title , :text , :text , :image_url , :date , :posted_by )  
+                ( :user_id , :title , :description , :text , :image_url , :date , :posted_by )  
         '''
         ,**data).lastrowid
 
@@ -1742,7 +1742,7 @@ def post_update_data():
 def post(post_name):
     post_name = parse_in_like(post_name)
     print(post_name,"$$$$$$$$$$$$$$$$$$$$$$$$$$")
-    post_name+="%"
+    # post_name+="%"
     response = {}
     response['data'] = {}
     response['response'] = {}
@@ -1926,7 +1926,8 @@ def update_post():
                 SET 
                     user_id = :user_id,
                     title = :title,
-                    text = :text
+                    text = :text,
+                    description = :description
                 WHERE 
                     post_id = :post_id
             '''
@@ -1940,6 +1941,7 @@ def update_post():
                     user_id = :user_id,
                     title = :title,
                     text = :text,
+                    description = :description,
                     image_url = :image_url
                 WHERE 
                     post_id = :post_id         
