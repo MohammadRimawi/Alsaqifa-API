@@ -7,6 +7,13 @@ def parse_in(s):
         else: new_s.append(s[i])
     return "".join(new_s)
 
+def parse_in_like(s):
+    new_s=[]
+    for i in range(len(s)): 
+        if s[i]==' ':new_s.append('_')
+        else: new_s.append(s[i])
+    return "".join(new_s)
+
 def parse_out(s):
     new_s=[]
     for i in range(len(s)): 

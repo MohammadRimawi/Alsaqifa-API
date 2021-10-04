@@ -113,6 +113,7 @@ def index():
     return str(res)
 
 
+
 @app.route('/api/authenticate',methods=['POST'])
 def authenticate():
     data = request.get_json()
@@ -121,20 +122,35 @@ def authenticate():
     # data['username'] = "MohammadRimawi"
     # data['password'] = "000000"
     response = {}
-    print(data)
+    print(data,"**********")
 
     try:
         
-        command = 'SELECT * FROM users u LEFT JOIN authentication a on a.user_id = u.user_id where a.username = "'+data["username"]+'" AND a.password = "'+data["password"]+'"'
+        # command = 'SELECT * FROM users u LEFT JOIN authentication a on a.user_id = u.user_id where a.username = "'+data["username"]+'" AND a.password = "'+data["password"]+'"'
+        result = sql(g.conn,'''
+            SELECT 
+                * 
+            FROM 
+                users u 
+            LEFT JOIN 
+                authentication a 
+            ON 
+                a.user_id = u.user_id 
+            WHERE 
+                a.username = :username 
+            AND 
+                a.password = :password
+        ''',**g.data).dict()
 
 
-        if len(result) != 1:
+        if not result:
 
             #TODO Add auditing
 
             return make_response(response,404)    
         else:
-            response["data"] = result[0]
+            print(result)
+            response["data"] = result
 
             return make_response(response,200)
             
@@ -144,6 +160,8 @@ def authenticate():
         pass
     return response
     pass
+
+
 
 
 
@@ -979,6 +997,9 @@ def add_new_post():
         return response,response['response']['status']
 
 
+
+
+
 # Description   :   Creates new comment on chosen post.
 # End-point     :   /api/create/comment
 # Methods       :   [ POST ]
@@ -1600,6 +1621,7 @@ def get_all_posts():
                     title
                 FROM
                     posts
+                
             '''
             ).dicts()
         
@@ -1624,7 +1646,7 @@ def get_all_posts():
                 
                 GROUP BY 
                     post.post_id
-
+                ORDER BY post.post_id DESC
                 LIMIT :page, :offset
             '''
             ,page = page*offset,offset = offset).dicts()
@@ -1718,9 +1740,9 @@ def post_update_data():
 
 @app.route('/api/get/post/<post_name>',methods=['POST'])
 def post(post_name):
-
-    post_name = parse_in(post_name)
-
+    post_name = parse_in_like(post_name)
+    print(post_name,"$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    post_name+="%"
     response = {}
     response['data'] = {}
     response['response'] = {}
@@ -1767,7 +1789,9 @@ def post(post_name):
                 tag.tag_id = pt.tag_id 
             
             WHERE 
-                post.title = :post_name
+                REPLACE(REPLACE(REPLACE(REPLACE(post.title,'/',''),' ','<>'),'><',''),'<>',' ')
+                Like :post_name
+            GROUP by post.post_id
         '''
         ,post_name = post_name).dict()
         print("*****************************************")
@@ -1846,7 +1870,6 @@ def post(post_name):
 ###################################
 #[ Update ]-----------------------#
 ###################################
-
 
 # Description   :   Updates chosen post
 # End-point     :   /api/update/post
@@ -1931,7 +1954,6 @@ def update_post():
         response['response']['status'] = 500
     finally:
         return response,response['response']['status']
-
 
 
 
@@ -2267,7 +2289,7 @@ def get_all_playlists():
 # Takes         :   Nothing.
 # Returns       :   dict with tracks info.
 
-@app.route("/api/get/all_tracks",methods=['POST'])
+@app.route("/api/get/all_tracks",methods=['POST','GET'])
 def get_all_tracks():
 
     response = {}
@@ -2374,7 +2396,6 @@ def tag_post():
 # Methods       :   [ POST ]
 # Takes         :   tag_name.
 # Returns       :   Nothing.
-
 
 @app.route('/api/create/tag',methods=['POST'])
 def add_tag():
